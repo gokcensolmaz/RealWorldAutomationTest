@@ -64,3 +64,40 @@ test('AUTH-UI-02 — Registered user cannot log in with incorrect password', asy
         page.getByRole('link', { name: user.username })
     ).not.toBeVisible();
 });
+
+test('AUTH-UI-03 — Unregistered user cannot log in', async ({ page }) => {
+    // ARRANGE
+    const unique = Date.now();
+    
+    const user = {
+        username: `gokcen_${unique}`,
+        email: `gokcen_${unique}@example.com`,
+        password: 'Test1234!'
+    }
+
+    // ACT
+    await openLoginPage(page);
+
+    await page
+        .getByPlaceholder('Email')
+        .fill(user.email);
+
+    await page
+        .getByPlaceholder('Password')
+        .fill(user.password);
+
+    await page
+        .getByRole('button', { name: 'Sign in' })
+        .click();
+
+    // ASSERT
+    await expect(
+        page.getByText(/credentials invalid/i)
+    ).toBeVisible();
+
+    await expect(page).toHaveURL(/\/login/);
+
+    await expect(
+        page.getByRole('link', { name: user.username })
+    ).not.toBeVisible();
+});
