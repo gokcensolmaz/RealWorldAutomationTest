@@ -1,4 +1,5 @@
 import { APIRequestContext, expect } from '@playwright/test';
+import { createUser } from '../api/users-api';
 
 export type TestUser = {
     username: string;
@@ -18,18 +19,7 @@ export async function createTestUser(
         password: 'Test1234!'
     };
 
-    const response = await request.post(
-        'https://api.realworld.show/api/users',
-        {
-            data: {
-                user: {
-                    username: user.username,
-                    email: user.email,
-                    password: user.password
-                }
-            }
-        }
-    );
+    const response = await createUser(request, user);
 
     expect(response.ok()).toBeTruthy();
 
