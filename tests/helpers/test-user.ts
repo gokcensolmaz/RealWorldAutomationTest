@@ -1,22 +1,25 @@
 import { APIRequestContext, expect } from '@playwright/test';
 import { createUser } from '../api/users-api';
+import { randomUUID } from 'crypto';
 
 export type TestUser = {
     username: string;
     email: string;
     password: string;
+    token: string
 };
 
 export async function createTestUser(
     request: APIRequestContext
 ): Promise<TestUser> {
 
-    const unique = Date.now();
+    const unique = randomUUID();
 
     const user: TestUser = {
         username: `gokcen_${unique}`,
         email: `gokcen_${unique}@example.com`,
-        password: 'Test1234!'
+        password: 'Test1234!',
+        token: ''
     };
 
     const response = await createUser(request, user);
@@ -29,5 +32,8 @@ export async function createTestUser(
     expect(body.user.email).toBe(user.email);
     expect(body.user.token).toBeTruthy();
 
-    return user;
+    return {
+        ...user,
+        token: body.user.token
+    };
 }

@@ -64,6 +64,16 @@ Successful retrieval returns a single Article representation.
 
 The returned Article follows the structure defined in `ARTICLE-REQ-04`.
 
+### Hosted Environment Observation
+
+The current hosted RealWorld environment does not currently allow PW-210 to verify `ARTICLE-REQ-07` exactly for a newly created test article.
+
+Observed during implementation:
+- anonymous `GET /api/articles/:slug` returned `404 {"errors":{"article":["not found"]}}`
+- the same article was returned successfully when the creating user's authentication token was supplied
+
+This is recorded as an **environment/specification discrepancy** and does not redefine `ARTICLE-REQ-07`.
+
 ## Update Requirements
 
 ### ARTICLE-REQ-09
