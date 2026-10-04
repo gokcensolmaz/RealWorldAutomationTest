@@ -62,3 +62,67 @@ export async function updateArticle(
         }
     );
 }
+
+export async function deleteArticle(
+    request: APIRequestContext,
+    token: string,
+    slug: string
+) {
+    return request.delete(
+        `${environment.apiBaseUrl}/articles/${encodeURIComponent(slug)}`,
+        {
+            headers: {
+                Authorization: `Token ${token}`
+            }
+        }
+    );
+}
+
+export async function createArticleWithInvalidPayload(
+    request: APIRequestContext,
+    token: string,
+    article: Partial<CreateArticleRequest>
+) {
+    return request.post(`${environment.apiBaseUrl}/articles`, {
+        headers: {
+            Authorization: `Token ${token}`
+        },
+        data: {
+            article
+        }
+    });
+}
+
+export async function createArticleWithoutAuth(
+    request: APIRequestContext,
+    article: CreateArticleRequest
+) {
+    return request.post(`${environment.apiBaseUrl}/articles`, {
+        data: {
+            article
+        }
+    });
+}
+export async function updateArticleWithoutAuth(
+    request: APIRequestContext,
+    slug: string,
+    article: UpdateArticleRequest
+) {
+    return request.put(
+        `${environment.apiBaseUrl}/articles/${encodeURIComponent(slug)}`,
+        {
+            data: {
+                article
+            }
+        }
+    );
+}
+
+export async function deleteArticleWithoutAuth(
+    request: APIRequestContext,
+    slug: string
+) {
+    return request.delete(
+        `${environment.apiBaseUrl}/articles/${encodeURIComponent(slug)}`
+    );
+}
