@@ -1,103 +1,157 @@
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/test';
 import { randomUUID } from 'node:crypto';
-
-import { createTestUser } from '../helpers/test-user';
 import { openLoginPage } from '../helpers/navigation';
 import { createArticle, getArticle } from '../api/articles-api';
+import { getCurrentUser } from '../api/users-api';
 
 // ============================================================
 // ARTICLE-UI-01 — Create Article
 // ============================================================
 
-test('ARTICLE-UI-01 — Authenticated user can create an article', async ({ page, request }) => {
+test('ARTICLE-UI-01 — Authenticated user can create an article',
+    async ({ page, testUser, articleCleanup }) => {
 
-    // ARRANGE — Create test user
-    const user = await createTestUser(request);
+        // ARRANGE — Test user and article data
+        const user = testUser;
 
-    const article = {
-        title: `UI Test Article ${randomUUID()}`,
-        description: 'Article created through the UI',
-        body: 'This article was created using Playwright.'
-    };
+        const article = {
+            title: `UI Test Article ${randomUUID()}`,
+            description: 'Article created through the UI',
+            body: 'This article was created using Playwright.'
+        };
 
-    // ACT — Login
-    await openLoginPage(page);
+        // ACT — Open login page
+        await openLoginPage(page);
 
-    await page.getByPlaceholder('Email').fill(user.email);
-    await page.getByPlaceholder('Password').fill(user.password);
+        await page
+            .getByPlaceholder('Email')
+            .fill(user.email);
 
-    await page.getByRole('button', { name: 'Sign in' }).click();
+        await page
+            .getByPlaceholder('Password')
+            .fill(user.password);
 
-    // ASSERT — User is logged in
-    await expect(
-        page
-            .locator('app-layout-header')
-            .getByRole('link', { name: user.username })
-    ).toBeVisible();
+        // Capture the UI login response
+        const loginResponsePromise = page.waitForResponse(
+            response =>
+                new URL(response.url()).pathname === '/api/users/login' &&
+                response.request().method() === 'POST'
+        );
 
-    // ACT — Open Article Editor
-    await page.getByRole('link', { name: 'New Article' }).click();
+        // ACT — Login
+        await page
+            .getByRole('button', { name: 'Sign in' })
+            .click();
 
-    await expect(page).toHaveURL(/\/editor/);
+        const loginResponse = await loginResponsePromise;
 
-    // ACT — Fill article form
-    await page
-        .getByPlaceholder('Article Title')
-        .fill(article.title);
+        // ASSERT — Login succeeded
+        expect(loginResponse.status()).toBe(200);
 
-    await page
-        .getByPlaceholder("What's this article about?")
-        .fill(article.description);
+        const loginBody = await loginResponse.json();
 
-    await page
-        .getByPlaceholder('Write your article (in markdown)')
-        .fill(article.body);
+        expect(loginBody.user.username).toBe(user.username);
+        expect(loginBody.user.token).toBeTruthy();
 
-    // Arrange response listener before publishing
-    const createResponsePromise = page.waitForResponse(
-        response =>
-            new URL(response.url()).pathname === '/api/articles' &&
-            response.request().method() === 'POST'
-    );
+        // Update the token used for article cleanup
+        articleCleanup.setToken(loginBody.user.token);
 
-    // ACT — Publish article
-    await page
-        .getByRole('button', { name: 'Publish Article' })
-        .click();
+        // ASSERT — User is logged in
+        await expect(
+            page
+                .locator('app-layout-header')
+                .getByRole('link', { name: user.username })
+        ).toBeVisible();
 
-    const createResponse = await createResponsePromise;
+        // ACT — Open Article Editor
+        await page
+            .getByRole('link', { name: 'New Article' })
+            .click();
 
-    // ASSERT — API returned Created
-    expect(createResponse.status()).toBe(201);
+        await expect(page).toHaveURL(/\/editor/);
 
-    // ASSERT — User is redirected to the article page
-    await expect(page).toHaveURL(/\/article\/[^/]+$/);
+        // ACT — Fill article form
+        await page
+            .getByPlaceholder('Article Title')
+            .fill(article.title);
 
-    // ASSERT — Published article is displayed
-    await expect(
-        page.getByRole('heading', { name: article.title })
-    ).toBeVisible();
+        await page
+            .getByPlaceholder("What's this article about?")
+            .fill(article.description);
 
-    await expect(
-        page.getByText(article.body)
-    ).toBeVisible();
-});
+        await page
+            .getByPlaceholder('Write your article (in markdown)')
+            .fill(article.body);
+
+        // Capture the article creation response
+        const createResponsePromise = page.waitForResponse(
+            response =>
+                new URL(response.url()).pathname === '/api/articles' &&
+                response.request().method() === 'POST'
+        );
+
+        // ACT — Publish article
+        await page
+            .getByRole('button', { name: 'Publish Article' })
+            .click();
+
+        const createResponse = await createResponsePromise;
+
+        // ASSERT — Article was created
+        expect(createResponse.status()).toBe(201);
+
+        const createBody = await createResponse.json();
+
+        // Register the article for automatic cleanup
+        articleCleanup.track(createBody.article.slug);
+
+        // ASSERT — Article belongs to the correct user
+        expect(createBody.article.author.username).toBe(user.username);
+
+        // ASSERT — User is redirected to the article page
+        await expect(page).toHaveURL(/\/article\/[^/]+$/);
+
+        // ASSERT — Published article is displayed
+        await expect(
+            page.getByRole('heading', { name: article.title })
+        ).toBeVisible();
+
+        await expect(
+            page.getByText(article.body)
+        ).toBeVisible();
+    }
+);
 
 // ============================================================
 // ARTICLE-UI-02 — Edit Article
 // ============================================================
 
-test('ARTICLE-UI-02 — Authenticated user can edit an article', async ({ page, request }) => {
 
-    // ARRANGE — Create test user
-    const user = await createTestUser(request);
+test('ARTICLE-UI-02 — Authenticated user can edit an article', async ({ page, request, testUser, articleCleanup }) => {
+
+    // ARRANGE — Test user and article data
+    const user = testUser;
 
     const article = {
         title: `Original Article ${randomUUID()}`,
         description: 'Original description',
         body: 'Original body'
     };
+
+    // ASSERT — Token belongs to the expected user
+    const currentUserResponse = await getCurrentUser(
+        request,
+        user.token
+    );
+
+    expect(currentUserResponse.status()).toBe(200);
+
+    const currentUserBody = await currentUserResponse.json();
+
+    expect(currentUserBody.user.username).toBe(user.username);
+
+    articleCleanup.setToken(user.token);
 
     // ARRANGE — Create article through API
     const response = await createArticle(
@@ -109,19 +163,42 @@ test('ARTICLE-UI-02 — Authenticated user can edit an article', async ({ page, 
     expect(response.status()).toBe(201);
 
     const responseBody = await response.json();
+    const slug = responseBody.article.slug;
+
+    // Register the article for automatic cleanup
+    articleCleanup.track(slug);
 
     // ASSERT — Article belongs to the correct user
     expect(responseBody.article.author.username).toBe(user.username);
 
-    const slug = responseBody.article.slug;
-
-    // ACT — Login
+    // ACT — Open login page
     await openLoginPage(page);
 
     await page.getByPlaceholder('Email').fill(user.email);
     await page.getByPlaceholder('Password').fill(user.password);
 
+    // Capture the UI login response
+    const loginResponsePromise = page.waitForResponse(
+        response =>
+            new URL(response.url()).pathname === '/api/users/login' &&
+            response.request().method() === 'POST'
+    );
+
+    // ACT — Login
     await page.getByRole('button', { name: 'Sign in' }).click();
+
+    const loginResponse = await loginResponsePromise;
+
+    // ASSERT — Login succeeded
+    expect(loginResponse.status()).toBe(200);
+
+    const loginBody = await loginResponse.json();
+
+    expect(loginBody.user.username).toBe(user.username);
+    expect(loginBody.user.token).toBeTruthy();
+
+    // Update the token used for cleanup
+    articleCleanup.setToken(loginBody.user.token);
 
     // ASSERT — User is logged in
     await expect(
@@ -131,7 +208,18 @@ test('ARTICLE-UI-02 — Authenticated user can edit an article', async ({ page, 
     ).toBeVisible();
 
     // ACT — Open the existing article
+    const articleResponsePromise = page.waitForResponse(
+        response =>
+            new URL(response.url()).pathname ===
+            `/api/articles/${encodeURIComponent(slug)}` &&
+            response.request().method() === 'GET'
+    );
+
     await page.goto(`/article/${slug}`);
+
+    const articleResponse = await articleResponsePromise;
+
+    expect(articleResponse.status()).toBe(200);
 
     // ASSERT — Correct article is displayed
     await expect(
@@ -183,11 +271,38 @@ test('ARTICLE-UI-02 — Authenticated user can edit an article', async ({ page, 
         .getByPlaceholder("What's this article about?")
         .fill(updatedDescription);
 
+    // Capture the update response
+    const updateResponsePromise = page.waitForResponse(
+        response =>
+            new URL(response.url()).pathname ===
+            `/api/articles/${encodeURIComponent(slug)}` &&
+            response.request().method() === 'PUT'
+    );
+
     await page
         .getByRole('button', { name: 'Publish Article' })
         .click();
 
-    // ASSERT — Updated article is displayed
+    const updateResponse = await updateResponsePromise;
+
+    // ASSERT — Update succeeded
+    expect(updateResponse.status()).toBe(200);
+
+    const updateBody = await updateResponse.json();
+    const updatedSlug = updateBody.article.slug;
+
+    // Update the tracked slug for cleanup
+    articleCleanup.replace(slug, updatedSlug);
+
+    // ASSERT — Slug changed
+    expect(updatedSlug).not.toBe(slug);
+
+    // ASSERT — User is redirected to the updated article
+    await expect(page).toHaveURL(
+        `/article/${updatedSlug}`
+    );
+
+    // ASSERT — Updated title is displayed
     await expect(
         page.getByRole('heading', { name: updatedTitle })
     ).toBeVisible();
@@ -197,26 +312,14 @@ test('ARTICLE-UI-02 — Authenticated user can edit an article', async ({ page, 
         page.getByText(article.body)
     ).toBeVisible();
 
-    // ASSERT — User is redirected to the updated article
-    await expect(page).toHaveURL(/\/article\/[^/]+$/);
-
-    const updatedSlug = new URL(page.url())
-        .pathname.split('/')
-        .pop()!;
-
-    expect(updatedSlug).not.toBe(slug);
-
     // ASSERT — Verify persisted state through API
     const getResponse = await getArticle(
         request,
         updatedSlug,
-        user.token
+        loginBody.user.token
     );
 
-    expect(
-        getResponse.status(),
-        await getResponse.text()
-    ).toBe(200);
+    expect(getResponse.status()).toBe(200);
 
     const getBody = await getResponse.json();
 
@@ -224,22 +327,25 @@ test('ARTICLE-UI-02 — Authenticated user can edit an article', async ({ page, 
     expect(getBody.article.description).toBe(updatedDescription);
     expect(getBody.article.body).toBe(article.body);
     expect(getBody.article.slug).toBe(updatedSlug);
-});
-
+}
+);
 // ============================================================
 // ARTICLE-UI-03 — Delete Article
 // ============================================================
 
-test('ARTICLE-UI-03 — Authenticated user can delete an article', async ({ page, request }) => {
 
-    // ARRANGE — Create test user
-    const user = await createTestUser(request);
+test('ARTICLE-UI-03 — Authenticated user can delete an article', async ({ page, request, testUser, articleCleanup }) => {
+
+    // ARRANGE — Test user and article data
+    const user = testUser;
 
     const article = {
         title: `Delete UI Article ${randomUUID()}`,
         description: 'Article created for UI deletion',
         body: 'This article will be deleted.'
     };
+
+    articleCleanup.setToken(user.token);
 
     // ARRANGE — Create article through API
     const createResponse = await createArticle(
@@ -251,18 +357,44 @@ test('ARTICLE-UI-03 — Authenticated user can delete an article', async ({ page
     expect(createResponse.status()).toBe(201);
 
     const createBody = await createResponse.json();
-
-    expect(createBody.article.author.username).toBe(user.username);
-
     const slug = createBody.article.slug;
 
-    // ACT — Login
+    // Register the article for automatic cleanup
+    articleCleanup.track(slug);
+
+    // ASSERT — Article belongs to the correct user
+    expect(createBody.article.author.username).toBe(user.username);
+
+    // ACT — Open login page
     await openLoginPage(page);
 
     await page.getByPlaceholder('Email').fill(user.email);
     await page.getByPlaceholder('Password').fill(user.password);
 
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    // Capture the UI login response
+    const loginResponsePromise = page.waitForResponse(
+        response =>
+            new URL(response.url()).pathname === '/api/users/login' &&
+            response.request().method() === 'POST'
+    );
+
+    // ACT — Login
+    await page
+        .getByRole('button', { name: 'Sign in' })
+        .click();
+
+    const loginResponse = await loginResponsePromise;
+
+    // ASSERT — Login succeeded
+    expect(loginResponse.status()).toBe(200);
+
+    const loginBody = await loginResponse.json();
+
+    expect(loginBody.user.username).toBe(user.username);
+    expect(loginBody.user.token).toBeTruthy();
+
+    // Update the token used for cleanup
+    articleCleanup.setToken(loginBody.user.token);
 
     // ASSERT — User is logged in
     await expect(
@@ -271,10 +403,10 @@ test('ARTICLE-UI-03 — Authenticated user can delete an article', async ({ page
             .getByRole('link', { name: user.username })
     ).toBeVisible();
 
-    // ACT — Open article
+    // ACT — Open the existing article
     await page.goto(`/article/${slug}`);
 
-    // ASSERT — Article is displayed
+    // ASSERT — Correct article is displayed
     await expect(
         page.getByRole('heading', { name: article.title })
     ).toBeVisible();
@@ -293,8 +425,21 @@ test('ARTICLE-UI-03 — Authenticated user can delete an article', async ({ page
 
     await expect(deleteButton).toBeVisible();
 
-    // ACT — Delete article
+    // Capture the DELETE response
+    const deleteResponsePromise = page.waitForResponse(
+        response =>
+            new URL(response.url()).pathname ===
+            `/api/articles/${encodeURIComponent(slug)}` &&
+            response.request().method() === 'DELETE'
+    );
+
+    // ACT — Delete article through UI
     await deleteButton.click();
+
+    const deleteResponse = await deleteResponsePromise;
+
+    // ASSERT — Delete request succeeded
+    expect(deleteResponse.ok()).toBeTruthy();
 
     // ASSERT — User is redirected to the home page
     await expect(page).toHaveURL('https://demo.realworld.show/');
@@ -303,7 +448,7 @@ test('ARTICLE-UI-03 — Authenticated user can delete an article', async ({ page
     const getResponse = await getArticle(
         request,
         slug,
-        user.token
+        loginBody.user.token
     );
 
     expect(getResponse.status()).toBe(404);
@@ -311,4 +456,8 @@ test('ARTICLE-UI-03 — Authenticated user can delete an article', async ({ page
     const getBody = await getResponse.json();
 
     expect(getBody.errors.article).toContain('not found');
-});
+
+    // Article is already deleted — no teardown required
+    articleCleanup.untrack(slug);
+}
+);

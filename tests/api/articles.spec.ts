@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/test';
 import {
     createArticle,
     getArticle,
@@ -29,9 +29,11 @@ test.beforeAll(async () => {
     apiUser = JSON.parse(file);
 });
 
-test('ARTICLE-API-01 — Authenticated user can create an article', async ({ request }) => {
+test('ARTICLE-API-01 — Authenticated user can create an article', async ({ request, articleCleanup }) => {
     // ARRANGE
     const user = apiUser;
+    articleCleanup.setToken(user.token);
+
     const unique = randomUUID();
 
     const article = {
@@ -51,6 +53,8 @@ test('ARTICLE-API-01 — Authenticated user can create an article', async ({ req
     expect(response.ok()).toBeTruthy();
 
     const body = await response.json();
+    articleCleanup.track(body.article.slug);
+
 
     expect(body.article.title).toBe(article.title);
     expect(body.article.description).toBe(article.description);
@@ -68,9 +72,12 @@ test('ARTICLE-API-01 — Authenticated user can create an article', async ({ req
     expect(body.article.author.username).toBe(user.username);
 });
 
-test('ARTICLE-API-02 — Authenticated user can retrieve created article by slug', async ({ request }) => {
+test('ARTICLE-API-02 — Authenticated user can retrieve created article by slug', async ({ request, articleCleanup }) => {
 
     const user = apiUser;
+    articleCleanup.setToken(user.token);
+
+
     const unique = randomUUID();
 
     const article = {
@@ -89,6 +96,8 @@ test('ARTICLE-API-02 — Authenticated user can retrieve created article by slug
 
     const createBody = await createResponse.json();
     const slug = createBody.article.slug;
+
+    articleCleanup.track(slug);
 
     // ACT
     const getResponse = await getArticle(
@@ -115,9 +124,11 @@ test('ARTICLE-API-02 — Authenticated user can retrieve created article by slug
     expect(getBody.article.author.username).toBe(user.username);
 });
 
-test('ARTICLE-API-03 — Authenticated user can update article title', async ({ request }) => {
+test('ARTICLE-API-03 — Authenticated user can update article title', async ({ request, articleCleanup }) => {
     // ARRANGE
     const user = apiUser;
+    articleCleanup.setToken(user.token);
+
     const unique = randomUUID();
 
     const article = {
@@ -137,6 +148,7 @@ test('ARTICLE-API-03 — Authenticated user can update article title', async ({ 
     const createBody = await createResponse.json();
     const originalSlug = createBody.article.slug;
 
+    articleCleanup.track(originalSlug);
     const newTitle = `Updated Article ${unique}`;
 
     // ACT
@@ -153,6 +165,13 @@ test('ARTICLE-API-03 — Authenticated user can update article title', async ({ 
     expect(updateResponse.ok()).toBeTruthy();
 
     const updateBody = await updateResponse.json();
+    const updatedSlug = updateBody.article.slug;
+
+    // Update tracked resource for cleanup
+    articleCleanup.replace(
+        originalSlug,
+        updatedSlug
+    );
 
     expect(updateBody.article.title).toBe(newTitle);
     expect(updateBody.article.description).toBe(article.description);
@@ -160,7 +179,6 @@ test('ARTICLE-API-03 — Authenticated user can update article title', async ({ 
 
     expect(updateBody.article.slug).not.toBe(originalSlug);
 
-    const updatedSlug = updateBody.article.slug;
 
     // ASSERT — persisted state
     const getResponse = await getArticle(
@@ -219,7 +237,64 @@ for (const testCase of requiredFieldCases) {
         expect(body.errors[testCase.missingField]).toContain("can't be blank");
     });
 }
+test(
+    'ARTICLE-API-04 — Authenticated user can delete an article',
+    async ({ request, articleCleanup }) => {
 
+        // ARRANGE
+        const user = apiUser;
+        const unique = randomUUID();
+
+        articleCleanup.setToken(user.token);
+
+        const article = {
+            title: `Delete Article ${unique}`,
+            description: 'Article created for DELETE test',
+            body: 'This article will be deleted.'
+        };
+
+        const createResponse = await createArticle(
+            request,
+            user.token,
+            article
+        );
+
+        expect(createResponse.status()).toBe(201);
+
+        const createBody = await createResponse.json();
+        const slug = createBody.article.slug;
+
+        articleCleanup.track(slug);
+
+        expect(createBody.article.author.username).toBe(user.username);
+
+        // ACT
+        const deleteResponse = await deleteArticle(
+            request,
+            user.token,
+            slug
+        );
+
+        // ASSERT — delete succeeded
+        expect(deleteResponse.ok()).toBeTruthy();
+
+        // ASSERT — article no longer exists
+        const getResponse = await getArticle(
+            request,
+            slug,
+            user.token
+        );
+
+        expect(getResponse.status()).toBe(404);
+
+        const getBody = await getResponse.json();
+
+        expect(getBody.errors.article).toContain('not found');
+
+        // Resource is already deleted
+        articleCleanup.untrack(slug);
+    }
+);
 test('ARTICLE-TC-06 — unauthenticated user cannot create an article', async ({ request }) => {
     const unique = randomUUID();
 
@@ -241,9 +316,10 @@ test('ARTICLE-TC-06 — unauthenticated user cannot create an article', async ({
     expect(body.errors.token).toContain('is missing');
 });
 
-test('ARTICLE-TC-11 — unauthenticated user cannot update an article', async ({ request }) => {
+test('ARTICLE-TC-11 — unauthenticated user cannot update an article', async ({ request, articleCleanup }) => {
     // ARRANGE
     const unique = randomUUID();
+    articleCleanup.setToken(apiUser.token);
 
     const article = {
         title: `Protected Article ${unique}`,
@@ -261,6 +337,8 @@ test('ARTICLE-TC-11 — unauthenticated user cannot update an article', async ({
 
     const createBody = await createResponse.json();
     const slug = createBody.article.slug;
+
+    articleCleanup.track(slug);
 
     // ACT
     const updateResponse = await updateArticleWithoutAuth(
@@ -293,9 +371,10 @@ test('ARTICLE-TC-11 — unauthenticated user cannot update an article', async ({
     expect(getBody.article.body).toBe(article.body);
 });
 
-test('ARTICLE-TC-13 — unauthenticated user cannot delete an article', async ({ request }) => {
+test('ARTICLE-TC-13 — unauthenticated user cannot delete an article', async ({ request, articleCleanup }) => {
     // ARRANGE
     const unique = randomUUID();
+    articleCleanup.setToken(apiUser.token);
 
     const article = {
         title: `Protected Delete Article ${unique}`,
@@ -313,6 +392,8 @@ test('ARTICLE-TC-13 — unauthenticated user cannot delete an article', async ({
 
     const createBody = await createResponse.json();
     const slug = createBody.article.slug;
+
+    articleCleanup.track(slug);
 
     // ACT
     const deleteResponse = await deleteArticleWithoutAuth(
@@ -341,9 +422,10 @@ test('ARTICLE-TC-13 — unauthenticated user cannot delete an article', async ({
     expect(getBody.article.title).toBe(article.title);
 });
 
-test('ARTICLE-TC-02 — authenticated user can create an article with tags', async ({ request }) => {
+test('ARTICLE-TC-02 — authenticated user can create an article with tags', async ({ request, articleCleanup }) => {
     // ARRANGE
     const unique = randomUUID();
+    articleCleanup.setToken(apiUser.token);
 
     const tags = [
         'playwright',
@@ -371,6 +453,9 @@ test('ARTICLE-TC-02 — authenticated user can create an article with tags', asy
     ).toBe(201);
 
     const createBody = await createResponse.json();
+    const slug = createBody.article.slug;
+    articleCleanup.track(slug);
+
 
     expect(createBody.article.title).toBe(article.title);
 
@@ -379,7 +464,6 @@ test('ARTICLE-TC-02 — authenticated user can create an article with tags', asy
         expect.arrayContaining(tags)
     );
 
-    const slug = createBody.article.slug;
 
     // ASSERT — persisted state
     const getResponse = await getArticle(
@@ -398,9 +482,10 @@ test('ARTICLE-TC-02 — authenticated user can create an article with tags', asy
     );
 });
 
-test('ARTICLE-TC-09 — authenticated user can update article description only', async ({ request }) => {
+test('ARTICLE-TC-09 — authenticated user can update article description only', async ({ request, articleCleanup }) => {
     // ARRANGE
     const unique = randomUUID();
+    articleCleanup.setToken(apiUser.token);
 
     const article = {
         title: `Description Update Article ${unique}`,
@@ -418,6 +503,8 @@ test('ARTICLE-TC-09 — authenticated user can update article description only',
 
     const createBody = await createResponse.json();
     const slug = createBody.article.slug;
+
+    articleCleanup.track(slug);
 
     const updatedDescription = 'Updated description';
 
@@ -457,9 +544,10 @@ test('ARTICLE-TC-09 — authenticated user can update article description only',
     expect(getBody.article.body).toBe(article.body);
 });
 
-test('ARTICLE-TC-10 — authenticated user can update article body only', async ({ request }) => {
+test('ARTICLE-TC-10 — authenticated user can update article body only', async ({ request, articleCleanup }) => {
     // ARRANGE
     const unique = randomUUID();
+    articleCleanup.setToken(apiUser.token);
 
     const article = {
         title: `Body Update Article ${unique}`,
@@ -477,6 +565,8 @@ test('ARTICLE-TC-10 — authenticated user can update article body only', async 
 
     const createBody = await createResponse.json();
     const slug = createBody.article.slug;
+
+    articleCleanup.track(slug);
 
     const updatedBody = 'Updated article body';
 
